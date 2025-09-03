@@ -14,6 +14,7 @@ An AI-powered mobile-first web application that analyzes food photos and provide
 The project includes optimized VS Code settings and recommended extensions:
 
 **Recommended Extensions:**
+
 - **Prettier**: Code formatting
 - **ESLint**: Code linting
 - **Tailwind CSS IntelliSense**: CSS class suggestions
@@ -21,6 +22,7 @@ The project includes optimized VS Code settings and recommended extensions:
 - **Auto Rename Tag**: HTML/JSX tag synchronization
 
 **Workspace Features:**
+
 - ✅ Auto-formatting on save
 - ✅ TypeScript auto-imports
 - ✅ Tailwind CSS class completion
@@ -47,25 +49,30 @@ The project includes optimized VS Code settings and recommended extensions:
 ### Installation
 
 1. **Clone the repository**
+
    ```bash
    git clone https://github.com/Kingbyno/promeals-ai.git
    cd promeals-ai
    ```
 
 2. **Install dependencies**
+
    ```bash
    pnpm install
    ```
 
 3. **Set up environment variables**
+
    ```bash
    cp .env.example .env.local
    ```
+
    Edit `.env.local` and update the webhook URL if needed.
 
    **Note**: Never commit `.env.local` to version control as it may contain sensitive information.
 
 4. **Start the development server**
+
    ```bash
    pnpm dev
    ```
@@ -78,6 +85,7 @@ The project includes optimized VS Code settings and recommended extensions:
 If you're using VS Code, the project includes recommended extensions and settings:
 
 1. Install recommended extensions when prompted, or manually install:
+
    - Prettier
    - ESLint
    - Tailwind CSS IntelliSense
@@ -91,6 +99,7 @@ If you're using VS Code, the project includes recommended extensions and setting
 ## 🛠️ Tech Stack
 
 ### Frontend
+
 - **Framework**: [Next.js 15](https://nextjs.org/) with App Router
 - **Language**: [TypeScript 5](https://www.typescriptlang.org/)
 - **Styling**: [Tailwind CSS 4](https://tailwindcss.com/)
@@ -99,6 +108,7 @@ If you're using VS Code, the project includes recommended extensions and setting
 - **Forms**: [React Hook Form](https://react-hook-form.com/) with [Zod](https://zod.dev/) validation
 
 ### Key Dependencies
+
 - **Charts**: [Recharts](https://recharts.org/)
 - **Themes**: [next-themes](https://github.com/pacocoursey/next-themes)
 - **Analytics**: [Vercel Analytics](https://vercel.com/analytics)
@@ -111,6 +121,7 @@ If you're using VS Code, the project includes recommended extensions and setting
 The project includes optimized VS Code settings and recommended extensions:
 
 **Recommended Extensions:**
+
 - **Prettier**: Code formatting
 - **ESLint**: Code linting
 - **Tailwind CSS IntelliSense**: CSS class suggestions
@@ -118,6 +129,7 @@ The project includes optimized VS Code settings and recommended extensions:
 - **Auto Rename Tag**: HTML/JSX tag synchronization
 
 **Workspace Features:**
+
 - ✅ Auto-formatting on save
 - ✅ TypeScript auto-imports
 - ✅ Tailwind CSS class completion
@@ -153,7 +165,8 @@ Create a `.env.local` file in the root directory:
 NEXT_PUBLIC_FOOD_AI_WEBHOOK_URL=https://kingpromise007.app.n8n.cloud/webhook/food-ai
 ```
 
-**Important**: 
+**Important**:
+
 - Copy from `.env.example` to get started
 - Never commit `.env.local` to version control
 - Update the webhook URL if you have your own N8N instance
@@ -186,22 +199,26 @@ pnpm clean
 ## 📱 Usage
 
 ### Taking Photos
+
 1. Click the **"Take Photo"** button
 2. Grant camera permissions when prompted
 3. Position your meal in the camera view
 4. Click **"Capture"** to take the photo
 
 ### Uploading Photos
+
 1. Click the **"Upload Photo"** button
 2. Select an image from your device
 3. The app will automatically analyze the image
 
 ### Viewing Results
+
 - **Nutrition Facts**: See detailed breakdown of calories, protein, carbs, and fat
 - **Food Items**: Individual food items detected in the meal
 - **Meal Type**: Categorize as breakfast, lunch, dinner, or snack
 
 ### Tracking Progress
+
 - **History Tab**: View all saved meals with timestamps
 - **Goals Tab**: Set daily nutrition targets
 - **Progress Bars**: Visual representation of goal achievement
