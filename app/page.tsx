@@ -2,6 +2,7 @@
 
 import type React from "react";
 import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -73,8 +74,15 @@ export default function ProCaloriesAI() {
   >("lunch");
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [isLoadingCamera, setIsLoadingCamera] = useState(false);
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [activeDeviceId, setActiveDeviceId] = useState<string | null>(null);
+  const [preferredFacing, setPreferredFacing] = useState<
+    "environment" | "user"
+  >("environment");
+  const [cameraError, setCameraError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pendingStreamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     const savedMealsData = localStorage.getItem("promeals_meals");
@@ -95,6 +103,23 @@ export default function ProCaloriesAI() {
   useEffect(() => {
     localStorage.setItem("promeals_goals", JSON.stringify(nutritionGoals));
   }, [nutritionGoals]);
+
+  // Cleanup: stop camera when component unmounts or when hiding camera
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
+
+  // Pause/stop camera when tab becomes hidden to free device
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.hidden) stopCamera();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () =>
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
 
   const getTodaysTotals = () => {
     const today = new Date().toDateString();
@@ -154,176 +179,134 @@ export default function ProCaloriesAI() {
   };
 
   const startCamera = async () => {
-    console.log("[v0] ===== STARTING CAMERA ACCESS =====");
+    setCameraError(null);
+    console.log("[cam] Starting camera...");
     try {
-      console.log("[v0] Requesting camera access...");
-      console.log("[v0] Browser:", navigator.userAgent);
-      console.log("[v0] HTTPS:", location.protocol === "https:");
-      console.log("[v0] Localhost:", location.hostname === "localhost");
-
-      // Check if getUserMedia is supported
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("Camera API not supported in this browser");
       }
 
-      // Check permissions first
+      // Try to check permissions (may throw on some browsers; ignore if so)
       try {
-        const permissionStatus = await navigator.permissions.query({
+        const ps = await navigator.permissions.query({
           name: "camera" as PermissionName,
         });
-        console.log("[v0] Camera permission status:", permissionStatus.state);
-        if (permissionStatus.state === "denied") {
-          throw new Error("Camera permission denied");
-        }
-      } catch (permError) {
-        console.log("[v0] Permission check failed:", permError);
-      }
+        if (ps.state === "denied") throw new Error("Camera permission denied");
+      } catch {}
 
-      console.log("[v0] Attempting to get camera stream...");
+      setIsLoadingCamera(true);
 
-      // Try different camera constraints for better compatibility
-      let stream;
+      // First lightweight stream to unlock device labels if needed
+      let probeStream: MediaStream | null = null;
       try {
-        // First try rear camera
-        console.log("[v0] Trying rear camera...");
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: "environment",
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
+        probeStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
         });
-        console.log("[v0] Rear camera accessed successfully");
-      } catch (rearError) {
-        console.log("[v0] Rear camera failed, trying front camera:", rearError);
-        try {
-          // Fallback to front camera
-          console.log("[v0] Trying front camera...");
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              facingMode: "user",
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
-          });
-          console.log("[v0] Front camera accessed successfully");
-        } catch (frontError) {
-          console.log(
-            "[v0] Front camera failed, trying any camera:",
-            frontError
+        const devices = (
+          await navigator.mediaDevices.enumerateDevices()
+        ).filter((d) => d.kind === "videoinput");
+        setVideoDevices(devices);
+
+        // Choose best device based on facing preference
+        const pickByFacing = (facing: "environment" | "user") =>
+          devices.find((d) =>
+            d.label.toLowerCase().includes("back") ||
+            d.label.toLowerCase().includes("rear") ||
+            d.label.toLowerCase().includes("environment")
+              ? facing === "environment"
+              : d.label.toLowerCase().includes("front") ||
+                d.label.toLowerCase().includes("user") ||
+                d.label.toLowerCase().includes("face")
+              ? facing === "user"
+              : false
           );
-          // Final fallback to any available camera
-          console.log("[v0] Trying any camera...");
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
-          });
-          console.log("[v0] Any camera accessed successfully");
+
+        const preferredDevice =
+          preferredFacing === "environment"
+            ? pickByFacing("environment") || devices[0]
+            : pickByFacing("user") || devices[0];
+
+        if (preferredDevice) setActiveDeviceId(preferredDevice.deviceId);
+      } finally {
+        // Close the probe stream before opening actual stream
+        if (probeStream) {
+          probeStream.getTracks().forEach((t) => t.stop());
         }
       }
 
+      // Open actual stream using deviceId when available or facingMode fallback
+      const constraints: MediaStreamConstraints = {
+        video: activeDeviceId
+          ? {
+              deviceId: { exact: activeDeviceId },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            }
+          : {
+              facingMode: preferredFacing,
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+        audio: false,
+      };
+
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (e) {
+        // Fallback to minimal constraints
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+
+      // Defer attaching until after <video> is rendered
+      pendingStreamRef.current = stream;
       setShowCamera(true);
-      console.log(
-        "[v0] showCamera set to true, video element should be visible"
+    } catch (error) {
+      console.error("[cam] startCamera error", error);
+      setIsLoadingCamera(false);
+      setCameraError(
+        error instanceof Error ? error.message : "Failed to access camera"
       );
 
-      if (videoRef.current) {
-        console.log("[v0] Setting video srcObject...");
-        console.log("[v0] Video element:", videoRef.current);
-        videoRef.current.srcObject = stream;
-        // Wait for video to be ready
-        videoRef.current.onloadedmetadata = () => {
-          console.log(
-            "[v0] Video metadata loaded, dimensions:",
-            videoRef.current?.videoWidth,
-            "x",
-            videoRef.current?.videoHeight
-          );
-          console.log(
-            "[v0] Video element ready state:",
-            videoRef.current?.readyState
-          );
-          videoRef.current
-            ?.play()
-            .then(() => {
-              console.log("[v0] Video playback started successfully");
-              console.log("[v0] Video is playing:", !videoRef.current?.paused);
-              setIsLoadingCamera(false);
-            })
-            .catch((playError) => {
-              console.error("[v0] Video play failed:", playError);
-              setShowCamera(false);
-              setIsLoadingCamera(false);
-              alert("Failed to start video playback. Please try again.");
-            });
-        };
-        videoRef.current.onerror = (e) => {
-          console.error("[v0] Video element error:", e);
-          setShowCamera(false);
-          setIsLoadingCamera(false);
-          alert("Video error occurred. Please refresh the page and try again.");
-        };
-      } else {
-        console.error("[v0] Video ref is null");
-        alert("Video element not found. Please refresh the page.");
-        setShowCamera(false);
-        setIsLoadingCamera(false);
-      }
-    } catch (error) {
-      console.error("Error accessing camera:", error);
-      setIsLoadingCamera(false);
-
-      // Provide more specific error messages
-      if (error instanceof DOMException) {
-        switch (error.name) {
-          case "NotAllowedError":
-            alert(
-              "Camera access denied. Please allow camera permissions in your browser and try again."
-            );
-            break;
-          case "NotFoundError":
-            alert(
-              "No camera found on this device. Please check if your camera is connected and working."
-            );
-            break;
-          case "NotReadableError":
-            alert(
-              "Camera is already in use by another application. Please close other apps using the camera."
-            );
-            break;
-          case "OverconstrainedError":
-            alert(
-              "Camera doesn't support the requested settings. Trying with basic settings..."
-            );
-            // Try with minimal constraints
-            tryBasicCamera();
-            break;
-          case "SecurityError":
-            alert(
-              "Camera access blocked due to security restrictions. Make sure you're using HTTPS or localhost."
-            );
-            break;
-          case "AbortError":
-            alert("Camera access was interrupted. Please try again.");
-            break;
-          default:
-            alert(`Camera error (${error.name}): ${error.message}`);
-        }
-      } else {
-        alert(
-          `Failed to access camera: ${
-            error instanceof Error ? error.message : "Unknown error"
-          }`
-        );
+      if (
+        error instanceof DOMException &&
+        error.name === "OverconstrainedError"
+      ) {
+        tryBasicCamera();
       }
     }
   };
 
+  // Attach pending stream once the video element exists after render
+  useEffect(() => {
+    if (!showCamera) return;
+    const stream = pendingStreamRef.current;
+    if (!stream || !videoRef.current) return;
+
+    const video = videoRef.current;
+    video.srcObject = stream;
+    video.onloadedmetadata = () => {
+      video
+        .play()
+        .then(() => setIsLoadingCamera(false))
+        .catch((err) => {
+          console.error("[cam] play() failed", err);
+          setIsLoadingCamera(false);
+          setCameraError(
+            "Autoplay blocked. Tap the video to start playback or use Upload."
+          );
+        });
+    };
+    video.onerror = (e) => {
+      console.error("[cam] video error", e);
+      setIsLoadingCamera(false);
+      setCameraError("Video error. Please refresh and try again.");
+    };
+  }, [showCamera]);
+
   const tryBasicCamera = async () => {
     try {
-      console.log("[v0] Trying basic camera access...");
+      console.log("[cam] Trying basic camera access...");
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true, // Minimal constraints
       });
@@ -335,13 +318,34 @@ export default function ProCaloriesAI() {
           videoRef.current?.play();
         };
       }
-      console.log("[v0] Basic camera access successful");
+      console.log("[cam] Basic camera access successful");
     } catch (error) {
-      console.error("[v0] Basic camera access failed:", error);
+      console.error("[cam] Basic camera access failed:", error);
       setIsLoadingCamera(false);
-      alert(
-        "Camera access failed even with basic settings. Please check your browser and device settings."
+      setCameraError(
+        "Camera access failed. You can still upload a photo using the Upload button."
       );
+    }
+  };
+
+  const switchCamera = async () => {
+    if (videoDevices.length < 2) return; // nothing to switch
+    try {
+      const currentIndex = videoDevices.findIndex(
+        (d) => d.deviceId === activeDeviceId
+      );
+      const nextIndex = (currentIndex + 1) % videoDevices.length;
+      const nextDevice = videoDevices[nextIndex];
+      setActiveDeviceId(nextDevice.deviceId);
+      setPreferredFacing((prev) =>
+        prev === "environment" ? "user" : "environment"
+      );
+
+      // Restart stream with new device
+      stopCamera();
+      setTimeout(() => startCamera(), 50);
+    } catch (e) {
+      console.error("[cam] switchCamera error", e);
     }
   };
 
@@ -375,37 +379,44 @@ export default function ProCaloriesAI() {
       canvas.height = video.videoHeight;
 
       // Draw the video frame to canvas
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const usingFront = preferredFacing === "user";
+      if (usingFront) {
+        // Unmirror capture if preview is mirrored (preview CSS may mirror front camera)
+        context.save();
+        context.scale(-1, 1);
+        context.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+        context.restore();
+      } else {
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      }
 
       // Convert to data URL
-      const imageData = canvas.toDataURL("image/jpeg", 0.8); // 80% quality for smaller file size
-
-      console.log(
-        "[v0] Photo captured successfully, size:",
-        imageData.length,
-        "characters"
-      );
+      const imageData = canvas.toDataURL("image/jpeg", 0.8);
 
       setSelectedImage(imageData);
       setNutritionData(null);
       stopCamera();
       analyzeImageData(imageData);
     } catch (error) {
-      console.error("[v0] Error capturing photo:", error);
+      console.error("[cam] Error capturing photo:", error);
       alert("Failed to capture photo. Please try again.");
     }
   };
 
   const stopCamera = () => {
     try {
-      if (videoRef.current?.srcObject) {
-        const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
-        tracks.forEach((track) => {
-          console.log("[v0] Stopping track:", track.kind, track.label);
-          track.stop();
+      const v = videoRef.current;
+      const active =
+        (v?.srcObject as MediaStream | null) || pendingStreamRef.current;
+      if (active) {
+        active.getTracks().forEach((t) => {
+          try {
+            t.stop();
+          } catch {}
         });
-        videoRef.current.srcObject = null;
       }
+      if (v) v.srcObject = null;
+      pendingStreamRef.current = null;
       setShowCamera(false);
       console.log("[v0] Camera stopped successfully");
     } catch (error) {
@@ -574,38 +585,7 @@ export default function ProCaloriesAI() {
           Point your camera at any meal and get instant nutrition facts in
           seconds.
         </p>
-        <div className="text-sm text-gray-400 mb-4">
-          Having camera issues?{" "}
-          <button
-            onClick={() => setShowTroubleshooting(true)}
-            className="text-orange-400 hover:text-orange-300 underline"
-          >
-            Click here for troubleshooting
-          </button>
-          <br />
-          <button
-            onClick={() => {
-              console.log("[DEBUG] Current state:");
-              console.log("- showCamera:", showCamera);
-              console.log("- videoRef.current:", videoRef.current);
-              console.log("- video srcObject:", videoRef.current?.srcObject);
-              console.log("- video readyState:", videoRef.current?.readyState);
-              console.log("- video paused:", videoRef.current?.paused);
-              console.log(
-                "- video dimensions:",
-                videoRef.current?.videoWidth,
-                "x",
-                videoRef.current?.videoHeight
-              );
-              alert(
-                `Debug info logged to console. Check F12 > Console for details.`
-              );
-            }}
-            className="text-blue-400 hover:text-blue-300 underline ml-4"
-          >
-            Debug Camera
-          </button>
-        </div>
+        {/* Removed troubleshooting and debug links */}
       </div>
 
       {!showCamera && !selectedImage && (
@@ -646,7 +626,9 @@ export default function ProCaloriesAI() {
                 autoPlay
                 playsInline
                 muted
-                className="w-full h-64 object-cover rounded-lg border-2 border-orange-500"
+                className={`w-full h-64 object-cover rounded-lg border-2 border-orange-500 ${
+                  preferredFacing === "user" ? "scale-x-[-1]" : ""
+                }`}
                 onError={(e) => console.error("[v0] Video error:", e)}
                 onLoadedData={() =>
                   console.log("[v0] Video loaded successfully")
@@ -665,6 +647,11 @@ export default function ProCaloriesAI() {
                 <X className="w-4 h-4" />
               </Button>
             </div>
+            {cameraError && (
+              <div className="mt-3 text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded px-3 py-2">
+                {cameraError}
+              </div>
+            )}
             <div className="flex gap-2 mt-4">
               <Button
                 onClick={capturePhoto}
@@ -674,12 +661,45 @@ export default function ProCaloriesAI() {
                 Capture
               </Button>
               <Button
+                onClick={switchCamera}
+                variant="outline"
+                className="border-white/30 text-white hover:bg-white/10 bg-transparent"
+                disabled={videoDevices.length < 2}
+                title={
+                  videoDevices.length < 2 ? "No other camera" : "Switch camera"
+                }
+              >
+                Switch
+              </Button>
+              <Button
                 onClick={stopCamera}
                 variant="outline"
                 className="border-white/30 text-white hover:bg-white/10 bg-transparent"
               >
                 Cancel
               </Button>
+            </div>
+            <div className="flex justify-center mt-3">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  const el = document.getElementById(
+                    "native-camera"
+                  ) as HTMLInputElement | null;
+                  el?.click();
+                }}
+                className="text-xs text-gray-300 hover:text-white"
+              >
+                Use native camera instead
+              </Button>
+              <input
+                id="native-camera"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={handleImageUpload}
+              />
             </div>
           </CardContent>
         </Card>
@@ -1192,8 +1212,14 @@ export default function ProCaloriesAI() {
 
       <header className="relative z-10 p-6">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl flex items-center justify-center shadow-lg">
+          <Link
+            href="/"
+            onClick={() => setCurrentView("analyzer")}
+            className="flex items-center gap-3 cursor-pointer select-none group"
+            aria-label="Go to Promeals home"
+            title="Home"
+          >
+            <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl flex items-center justify-center shadow-lg transition-transform group-hover:scale-105">
               <svg
                 viewBox="0 0 24 24"
                 className="w-7 h-7 text-white"
@@ -1202,8 +1228,10 @@ export default function ProCaloriesAI() {
                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
               </svg>
             </div>
-            <span className="text-2xl font-bold">Promeals</span>
-          </div>
+            <span className="text-2xl font-bold transition-colors group-hover:text-orange-300">
+              Promeals
+            </span>
+          </Link>
         </div>
       </header>
 
