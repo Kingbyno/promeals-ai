@@ -135,45 +135,151 @@ export default function ProCaloriesAI() {
 
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
-      })
+      console.log("[v0] Requesting camera access...")
+      
+      // Try different camera constraints for better compatibility
+      let stream;
+      try {
+        // First try rear camera
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            facingMode: "environment",
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+        })
+        console.log("[v0] Rear camera accessed successfully")
+      } catch (rearError) {
+        console.log("[v0] Rear camera failed, trying front camera:", rearError)
+        try {
+          // Fallback to front camera
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { 
+              facingMode: "user",
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            },
+          })
+          console.log("[v0] Front camera accessed successfully")
+        } catch (frontError) {
+          console.log("[v0] Front camera failed, trying any camera:", frontError)
+          // Final fallback to any available camera
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { 
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            },
+          })
+          console.log("[v0] Any camera accessed successfully")
+        }
+      }
+
       setShowCamera(true)
+      
       if (videoRef.current) {
         videoRef.current.srcObject = stream
+        // Wait for video to be ready
+        videoRef.current.onloadedmetadata = () => {
+          console.log("[v0] Video metadata loaded, dimensions:", videoRef.current?.videoWidth, "x", videoRef.current?.videoHeight)
+          videoRef.current?.play()
+        }
+      } else {
+        console.error("[v0] Video ref is null")
+        alert("Video element not found. Please refresh the page.")
       }
     } catch (error) {
       console.error("Error accessing camera:", error)
-      alert("Camera access denied or not available")
+      
+      // Provide more specific error messages
+      if (error instanceof DOMException) {
+        switch (error.name) {
+          case "NotAllowedError":
+            alert("Camera access denied. Please allow camera permissions and try again.")
+            break
+          case "NotFoundError":
+            alert("No camera found on this device.")
+            break
+          case "NotReadableError":
+            alert("Camera is already in use by another application.")
+            break
+          case "OverconstrainedError":
+            alert("Camera doesn't support the requested settings.")
+            break
+          case "SecurityError":
+            alert("Camera access blocked due to security restrictions. Make sure you're using HTTPS.")
+            break
+          default:
+            alert(`Camera error: ${error.message}`)
+        }
+      } else {
+        alert("Failed to access camera. Please check your browser settings and try again.")
+      }
     }
   }
 
   const capturePhoto = () => {
-    if (videoRef.current && canvasRef.current) {
-      const canvas = canvasRef.current
-      const video = videoRef.current
-      const context = canvas.getContext("2d")
+    if (!videoRef.current || !canvasRef.current) {
+      console.error("[v0] Video or canvas ref is null")
+      alert("Camera not ready. Please try again.")
+      return
+    }
 
+    const canvas = canvasRef.current
+    const video = videoRef.current
+
+    // Check if video is ready
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      console.error("[v0] Video dimensions are 0")
+      alert("Camera not ready. Please wait a moment and try again.")
+      return
+    }
+
+    const context = canvas.getContext("2d")
+    if (!context) {
+      console.error("[v0] Could not get canvas context")
+      alert("Canvas not available. Please refresh the page.")
+      return
+    }
+
+    try {
+      // Set canvas dimensions to match video
       canvas.width = video.videoWidth
       canvas.height = video.videoHeight
 
-      if (context) {
-        context.drawImage(video, 0, 0)
-        const imageData = canvas.toDataURL("image/jpeg")
-        setSelectedImage(imageData)
-        setNutritionData(null)
-        stopCamera()
-        analyzeImageData(imageData)
-      }
+      // Draw the video frame to canvas
+      context.drawImage(video, 0, 0, canvas.width, canvas.height)
+      
+      // Convert to data URL
+      const imageData = canvas.toDataURL("image/jpeg", 0.8) // 80% quality for smaller file size
+      
+      console.log("[v0] Photo captured successfully, size:", imageData.length, "characters")
+      
+      setSelectedImage(imageData)
+      setNutritionData(null)
+      stopCamera()
+      analyzeImageData(imageData)
+    } catch (error) {
+      console.error("[v0] Error capturing photo:", error)
+      alert("Failed to capture photo. Please try again.")
     }
   }
 
   const stopCamera = () => {
-    if (videoRef.current?.srcObject) {
-      const tracks = (videoRef.current.srcObject as MediaStream).getTracks()
-      tracks.forEach((track) => track.stop())
+    try {
+      if (videoRef.current?.srcObject) {
+        const tracks = (videoRef.current.srcObject as MediaStream).getTracks()
+        tracks.forEach((track) => {
+          console.log("[v0] Stopping track:", track.kind, track.label)
+          track.stop()
+        })
+        videoRef.current.srcObject = null
+      }
+      setShowCamera(false)
+      console.log("[v0] Camera stopped successfully")
+    } catch (error) {
+      console.error("[v0] Error stopping camera:", error)
+      setShowCamera(false) // Still hide the camera UI even if cleanup fails
     }
-    setShowCamera(false)
   }
 
   const analyzeImageData = async (imageData?: string) => {
@@ -325,7 +431,15 @@ export default function ProCaloriesAI() {
         <Card className="w-full max-w-md bg-black/50 border-white/20">
           <CardContent className="p-4">
             <div className="relative">
-              <video ref={videoRef} autoPlay playsInline className="w-full h-64 object-cover rounded-lg" />
+              <video 
+                ref={videoRef} 
+                autoPlay 
+                playsInline 
+                muted 
+                className="w-full h-64 object-cover rounded-lg"
+                onError={(e) => console.error("[v0] Video error:", e)}
+                onLoadedData={() => console.log("[v0] Video loaded successfully")}
+              />
               <Button
                 onClick={stopCamera}
                 variant="ghost"

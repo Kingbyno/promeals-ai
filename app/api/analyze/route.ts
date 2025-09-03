@@ -12,7 +12,9 @@ export async function POST(request: NextRequest) {
     const webhookFormData = new FormData()
     webhookFormData.append("image", image)
 
-    const response = await fetch("https://kingpromise007.app.n8n.cloud/webhook/food-ai", {
+    const webhookUrl = process.env.NEXT_PUBLIC_FOOD_AI_WEBHOOK_URL || "https://kingpromise007.app.n8n.cloud/webhook/food-ai"
+
+    const response = await fetch(webhookUrl, {
       method: "POST",
       body: webhookFormData,
     })
